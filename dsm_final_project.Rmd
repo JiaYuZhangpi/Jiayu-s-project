@@ -1,0 +1,572 @@
+---
+title: "DATA SCIENCE MODELLING"
+author: "11041922"
+date: "2025-05-01"
+
+output:
+  pdf_document:
+    latex_engine: xelatex
+    includes:
+      in_header: preamble.tex
+  html_document:
+    theme: yeti
+---
+**word count (excluding code/figures): 2,102 words**
+
+
+# **Introduction**
+This report includes the explanation and prediction of data for **medical insurance charge** and **stroke predicion**. **Medical insurance charge** uses multiple linear regression(MLR), stepwise regression and GAM (Generalized Additive Model). **Stroke prediciton** uses logistic regression, LDA, and random forest models.
+
+---
+```{r setup, include=FALSE}
+library(knitr)
+knitr::opts_chunk$set(
+  message = FALSE,
+  warning = FALSE,
+  echo = TRUE
+)
+
+```
+
+# **Q1:  Medical Cost Predicton**
+# *Introduction*
+When people focus their health, they would charge health insurance. For insurance companies, they need to consider the level of risks they have to bear with customers, due to the different status from customers. The insurance contract usually considers various aspects in life, such as health status, geographical factors, age and sex. A model would be beneficial for predicting charges based on different characteristics of consumers. Therefore, companies can set best insurance contract matching corresponding consumer type.
+
+# *Explanatory of data*
+
+## Load Data
+```{r}
+#Load necessary libraries
+library(tidyverse)
+library(lubridate)
+library(ggplot2)
+library(corrplot)
+```
+
+```{r}
+# Load the dataset
+medical <- read.csv("https://tanjakec.github.io/CWData/medical_insurance.csv")
+
+# Check the first few rows of the dataset
+head(medical)
+
+# Check the structure and summary of the dataset
+str(medical)
+summary(medical)
+
+```
+## Check for missing values
+```{r}
+# Check for missing values
+colSums(is.na(medical))
+```
+The dataset contains 1,338 observations and 7 variables, covering demographic and lifestyle attributes such as age, BMI, sex, number of children, smoking status, and region.
+Viewing the data structure, it shows sex, smoker and region are character variables which record categorical information. They should be converted to factors in order to manipulate models. There is no missing value in data. 
+Based on the summary statistics in the dataset (mean = 13,270 vs. median = 9,382, with a max of 63,770), it can conclude that charges is right-skewed, meaning most people have moderate charges, but a small number incur very high costs.
+
+## Data Distribution (Visualizing Key Features)
+## Categorical variables
+```{r}
+
+#Bar plot for sex
+ggplot(medical, aes(x = sex)) + 
+  geom_bar(fill = "lightblue", color = "black") +
+  theme_minimal() + 
+  labs(title = "Distribution of Sex", x = "Sex", y = "Count")
+
+# Bar plot for smoker
+ggplot(medical, aes(x = smoker)) + 
+  geom_bar(fill = "lightgreen", color = "black") +
+  theme_minimal() + 
+  labs(title = "Distribution of Smoking Status", x = "Smoker", y = "Count")
+
+# Bar plot for region
+ggplot(medical, aes(x = region)) + 
+  geom_bar(fill = "lightcoral", color = "black") +
+  theme_minimal() + 
+  labs(title = "Distribution of Region", x = "Region", y = "Count")
+
+```
+<br style="clear: both;" />
+
+By visualizing categorical data through box plot, there is no significant difference in sex, that ensures the results would not be bias by sex. A box plot of charges by smoking status shows that smokers tend to have significantly higher charges than non-smokers, confirming smoking as a likely key predictor. Similarly, regional differences suggest people in the southeast incur higher costs, which may reflect demographic or health service factors.
+
+## Correlation between numerical variables
+```{r}
+# Correlation matrix for numeric variables
+cor_data <- medical %>%
+  select(age, bmi, children, charges) %>%
+  cor()
+
+# Visualizing the correlation matrix
+library(corrplot)
+corrplot(cor_data, method = "color", tl.col="black", tl.srt=45)
+
+```
+<br style="clear: both;" />
+
+Correlation matrix enables visualization of correlations between numerical variables. It indicates that while most variables are weakly correlated, age and charges have a relatively stronger positive association.
+
+## Boxplot of charges by region
+```{r}
+
+ggplot(medical, aes(x = region, y = charges, fill = region)) + 
+  geom_boxplot() +
+  theme_minimal() + 
+  labs(title = "Charges by Region", x = "Region", y = "Insurance Charges")
+
+```
+
+## Boxplot of charges by smoking status
+```{r}
+
+ggplot(medical, aes(x = smoker, y = charges, fill = smoker)) + 
+  geom_boxplot() +
+  theme_minimal() + 
+  labs(title = "Charges by Smoking Status", x = "Smoking Status", y = "Insurance Charges")
+
+```
+<br style="clear: both;" />
+
+Boxplot presents charges by different categorical variables. Look at charges by region, people in southeast charge relatively higher than other regions. It indicates people in this region may have different medical insurance charges or their demographic features are different than other regions. Boxplot of charges by smoking status shows smoking status has a significant effect on insurance charges. Smokers tend to have higher medical costs compare to non-smokers, which make sense that health risks are associated with smoking. 
+Overall, the exploratory analysis suggests that age, BMI, and smoking status may be strong predictors of medical costs.
+
+# *Develop and explain chosen model*
+## Set seed for reproducibility
+```{r}
+set.seed(42)
+# Create the train-test split
+train_index <- sample(1:nrow(medical), 0.8 * nrow(medical))  # 80% for training
+train_data <- medical[train_index, ]  # Training data
+test_data <- medical[-train_index, ]  # Test data
+
+```
+
+## Define 10-fold Cross-Validation
+```{r}
+library(caret)
+
+cv_control <- trainControl(method = "cv", number = 10)
+```
+Before constructing models, I set seed and divide dataset into training and test parts, to ensure the results are reproduceable. Models are constructed by training dataset, and validity of models is tested in test data set. It will use 10-fold cross validation method to resample and retest the model’s validity. For each model, I will calculate MSE, RMSE and R^2 that used in model comparison, in order to find the model with minimum mean square error.
+As insurance charge is a continuous outcome, multiple linear regression(MLR) can be used to identify its linear relationship with other predictor variables. It is a baseline model including all main effects. Stepwise regression helps to select most significant variables based on a criterion like AIC. It simplifies model by removing non-significant variables. 
+Random forest is another applicable model with decision trees. It improves the performance of decision trees by calculating average results from trees to reduce overfitting and variance. It is a non-parametric approach that accounts for complex interactions. It is useful as it is less sensitive to noise, but it takes larger time and cost to interpret trees. 
+Generalized additive model(GAM) is also used in this question, since it can capture non-linear effects, especially for age and BMI. 
+
+## Multiple Linear Regression (MLR)
+```{r}
+model1 <- lm(charges ~ ., data = train_data)
+cv1 <- train(charges ~ ., data = train_data, method = "lm", trControl = cv_control)
+mse1 <- mean((predict(model1, newdata = test_data) - test_data$charges)^2)
+rmse1 <- sqrt(mse1)
+r2_1 <- summary(model1)$r.squared
+```
+
+## Stepwise Regression
+```{r}
+model2 <- step(model1, direction = "both", trace = FALSE)
+cv2 <- train(charges ~ ., data = train_data, method = "lm", trControl = cv_control)
+mse2 <- mean((predict(model2, newdata = test_data) - test_data$charges)^2)
+rmse2 <- sqrt(mse2)
+r2_2 <- summary(model2)$r.squared
+```
+
+## Random Forests
+```{r}
+library(randomForest)
+model3 <- randomForest(charges ~ ., data = train_data, ntree = 500, importance = TRUE)
+mse3 <- mean((predict(model3, newdata = test_data) - test_data$charges)^2)
+rmse3 <- sqrt(mse3)
+r2_3 <- cor(predict(model3, newdata = test_data), test_data$charges)^2
+```
+
+## Generalized Additive Models (GAMs)
+```{r}
+library(mgcv)
+model4 <- gam(charges ~ s(age) + sex + bmi + children + smoker + region, data = train_data)
+cv4 <- train(charges ~ ., data = train_data, method = "gam", trControl = cv_control)
+mse4 <- mean((predict(model4, newdata = test_data) - test_data$charges)^2)
+rmse4 <- sqrt(mse4)
+# R-squared for GAM from mgcv::gam
+r2_4 <- summary(model4)$r.sq
+```
+
+#	*Evaluate chosen model*
+```{r}
+# Now create the data frame
+model_performance <- data.frame(
+  Model = c("Linear Regression", "Stepwise Regression", "Random Forest", "GAM"),
+  MSE = c(mse1, mse2, mse3, mse4),
+  RMSE = c(rmse1, rmse2, rmse3, rmse4),
+  R2 = c(r2_1, r2_2, r2_3, r2_4)
+)
+
+print(model_performance)
+```
+I compare model performance based on minimizing mean square error. The visualization of comparison helps to look at models’ performance clearly.
+The MLR, stepwise regression and GAM provide around 0.75 R^2, meaning 75% of variation is explained by models. Random forest has 0.85 R^2, which would be the best model according R^2. Regression models have similar MSE and RMSE, and stepwise regression model has only a slight improvement in MSE and RMSE. This suggests stepwise selection does not significantly improve model performance from MLR. The Random Forest model has the lowest RMSE and the highest R², indicating that it explains more variance in the insurance charges and makes more accurate predictions. While GAM and linear models had comparable results (R² around 0.75), Random Forest is substantially better than them, especially in capturing complex interactions without overfitting.
+These results suggest that Random Forest model is particularly effective for this dataset, likely due to non-linear relationships between predictors and medical costs.
+
+Visualization makes it easier to interpret results.
+```{r}
+# Identify the best (lowest RMSE) model
+best_model <- model_performance[which.min(model_performance$RMSE), "Model"]
+# Create a bar plot comparing model performance
+ggplot(model_performance, aes(x=Model, y=MSE, fill=(Model == best_model))) +
+  geom_bar(stat="identity", alpha=0.7) +
+  scale_fill_manual(values=c("gray", "darkorange")) +  # Highlight best model
+  geom_text(aes(label=round(MSE, 2)), vjust=-0.5, size=3.5, fontface="bold") +
+  labs(title="Model Performance Comparison (MSE)", y="Mean Squared Error (MSE)", x="Model") +
+  theme_minimal() +
+  theme(legend.position="none")  # Remove legend
+```
+
+# *Initial improvement*
+To improve model accuracy, non-linear relationship with charges would be further consideration. It could include interaction terms (e.g., smoker*age) to better capture compounding effect. Also, polynomial regression may help to describe higher-order relationships for continuous variables like age and BMI. 
+Gradient boosting would be a better model than GAM and random forest in order to have higher accuracy. It is a sequential model that learned previous errors and combine new models for errors to improve overall prediction. But this method needs to take care of overfitting. 
+Outliers should be considered as well, as there are unusually high medical charges which are visible by the boxplot of charges by region. The extreme values could distort model, and a log transformation of charges would reduce the impact of them.
+Though the random forest is the best predictive model, it would have limited interpretability due to the capture of complex non-linear relationships. It should consider keep model simpler but keep accuracy.Using regularized regression (e.g., LASSO) for model simplicity and multicollinearity control would be a good choice.
+The features not in the dataset should also be considered, they may be the confounders outside the model. medical history and other lifestyle factors may potentially influence the medical insurance charge, and these should be further considered.
+
+# **Q2. Stroke Prediction**
+# *Introduction*
+Stroke is a common health problem that people focus on. It is relative with various factors, and people would like to find which factors are important for preventing stroke. Here are a stroke dataset includes measurement of demographic, medical, and lifestyle factors. It aims to use this dataset to find the relationship between stroke and other factors, so that people could predict stroke status based on specific information. 
+
+# *Data Exploration*
+## Load necessary libraries
+```{r}
+library(dplyr)
+library(ggplot2)
+library(corrplot)
+library(caret)
+library(mice)
+library(VIM)
+library(MASS)
+library(pROC)
+library(randomForest)
+library(tidyverse)
+# Load dataset
+stroke_data <- read.csv("https://tanjakec.github.io/CWData/stroke_prediction.csv")  
+
+# Check initial structure and summary
+glimpse(stroke_data)
+str(stroke_data)
+
+```
+
+## Data Cleaning & Transformation
+Convert bmi to Numeric & Handle "N/A" Values
+```{r}
+stroke_data$bmi <- as.numeric(replace(stroke_data$bmi, stroke_data$bmi == "N/A", NA))
+```
+
+Convert Categorical Variables to Factors
+```{r}
+stroke_data <- stroke_data %>%
+  mutate(
+    gender = as.factor(gender),
+    ever_married = as.factor(ever_married),
+    work_type = as.factor(work_type),
+    residence_type = as.factor(residence_type),
+    smoking_status = as.factor(smoking_status),
+    hypertension = as.factor(hypertension),
+    heart_disease = as.factor(heart_disease),
+    stroke = as.factor(stroke),
+    # Outcome variable
+  )
+summary(stroke_data)
+```
+Firstly, I load the data and look at the basic structure of it, to check whether it needs to convert attribute and handle with missing data. The dataset contains 5,110 records with 11 features related to demographic and health conditions. The target variable, stroke, is heavily imbalanced, with only 5.1% (249 strokes)of cases being positive (stroke = 1). Gender, marriage status, work type, residence type, smoking status are categorical data, and they are converted as factors that would be easier to build models later.
+
+## Identify Extreme bmi Values
+```{r}
+stroke_data %>% filter(bmi < 10 | bmi > 60) 
+```
+In real-world populations, BMI values exceeding 60 are extremely rare and typically indicate morbid obesity. In this dataset, there are 201 missing values and 13 extreme outliers in the BMI variable, which have potential to distort model performance and decrease validity of the predictive analysis.
+
+## Check for Missing Values
+```{r}
+# Plot missing data pattern with better label spacing
+aggr(stroke_data,
+     col = c("skyblue", "deeppink"),
+     numbers = TRUE,
+     sortVars = TRUE,
+     labels = names(stroke_data),
+     cex.axis = 0.7,   
+     las = 2,          
+     gap = 3)          
+
+# Perform multiple imputation
+imputed_data <- mice(stroke_data, m = 5, method = "pmm", seed = 123)
+
+# Extract completed dataset
+stroke_data <- complete(imputed_data)
+```
+The missing values are dealt with multiple imputation, which reduce the problems of missing data in modeling.
+
+## Winsorization
+```{r}
+# Compute the 5th and 95th percentiles
+lower <- quantile(stroke_data$bmi, 0.05, na.rm = TRUE)
+upper <- quantile(stroke_data$bmi, 0.95, na.rm = TRUE)
+
+# Apply winsorization manually
+stroke_data$bmi <- pmin(pmax(stroke_data$bmi, lower), upper)
+```
+Instead of removing extreme value and reducing sample size, I apply Winsorisation at the 5th and 95th percentiles to reduce their influence but keep data integrity. It is consistent with best practices in predictive modelling. 
+
+
+## Exploratory Data Analysis (EDA)
+Check Class Balance
+```{r}
+barplot(table(stroke_data$stroke), 
+        main = "Class Balance: Stroke vs. No Stroke",
+        col = c("skyblue", "red"), 
+        names.arg = c("No Stroke", "Stroke"))
+```
+<br style="clear: both;" />
+
+Visualization of data helps to check the distribution of data in different classes. The data is imbalanced in stroke category as there are lots of data in no stroke status but only a few in stroke status. The imbalance in class distribution can influence model's predictive performance, as model is more likely to learn from the class with a higher proportion of data. As a result, the model may be biased toward the majority class, leading to inaccurate predictions for the minority class and potentially introducing selection bias.
+
+Histograms for Numeric Predictors
+```{r}
+stroke_data %>%
+  pivot_longer(cols = c(age, avg_glucose_level, bmi)) %>%
+  ggplot(aes(x = value, fill = name)) +
+  geom_density(alpha = 0.5) +
+  facet_wrap(~ name, scales = "free") +
+  theme_minimal() +
+  labs(title = "Density Plots of Numeric Predictors")
+```
+<br style="clear: both;" />
+
+Numeric variables are centrally distributed at a peak value, as shown in the diagram.
+
+Bar Plots for Categorical Variables
+```{r}
+categorical_vars <- c("gender", "smoking_status", "hypertension", "heart_disease", "work_type", "residence_type")
+
+for (var in categorical_vars) {
+  p <- ggplot(stroke_data, aes(x = .data[[var]], fill = factor(stroke))) +
+    geom_bar(position = "fill") + 
+    theme_minimal() +
+    labs(title = paste("Distribution of", var, "by Stroke"), y = "Proportion") +
+    scale_fill_manual(values = c("skyblue", "red"), name = "Stroke")
+  
+  print(p)  # Explicitly print the plot inside the loop
+}
+```
+<br style="clear: both;" />
+
+However, looking at categorical variables’ distribution by stroke, it shows significant imbalanced distribution. In each categorical distribution, there are only a few data represents stroke, some categories even don’t have stroke data.
+
+## Check Gender Levels
+```{r}
+table(stroke_data$gender)
+```
+
+Remove "Other" as it has only 1 observation
+```{r}
+stroke_data <- stroke_data %>% filter(gender != "Other")
+```
+For example, there is no stroke in other gender, by checking the numbers of data in each gender, there is only one data in other gender, and I remove it. Because the only one outlier does not influence the model significantly. It may be typo error, or just not representative data. The imbalance data selection would lead to a bias for modelling. 
+
+## Correlation Analysis
+```{r}
+num_vars <- stroke_data %>% select_if(is.numeric)
+cor_matrix <- cor(num_vars, use = "complete.obs")
+
+# Plot correlation matrix
+corrplot(cor_matrix, method = "circle")
+
+```
+<br style="clear: both;" />
+
+After the initial check of data, I look through the correlation between variables through correlation matrix. Age and avg_glucose_level are positively associated with stroke incidence. Multi collinearity issue occurs when the correlation is greater than the absolute value of 0.8, this means variables are highly correlated. When this happened, one of the two multi collinear variables should be removed from model. From the diagram, darker color indicates higher correlation level, there is no high correlation between variables, but there is moderate correlation between age & average glucose level, and age & bmi.
+
+# *Develop and explain chosen model*
+## Remove Irrelevant Columns
+```{r}
+stroke_data <- dplyr::select(stroke_data, -id)
+  # Remove ID as it's non-informative
+```
+Id data is removed for modelling simplicity.I implement and compare three classification models: Logistic Regression, LDA (Linear Discriminant Analysis), and Random Forest. Evaluation is based on ROC-AUC, a preferred metric for imbalanced data, along with confusion matrices and overall accuracy.
+
+```{r}
+# Identify numeric variables
+num_vars <- stroke_data %>% dplyr::select(age, avg_glucose_level, bmi)
+#Ensure
+sapply(num_vars, class)
+
+# Scale numeric predictors
+scaled_data <- as.data.frame(scale(num_vars))
+
+# Reattach categorical variables
+stroke_data <- cbind(scaled_data, stroke_data %>% dplyr::select(-age, -avg_glucose_level, -bmi))
+
+```
+
+## Split Data Into Training & Testing Sets
+```{r}
+set.seed(123)
+
+# Stratified split to maintain class balance
+train_index <- createDataPartition(stroke_data$stroke, p = 0.7, list = FALSE)
+
+# Create train and test sets
+train_data <- stroke_data[train_index, ]
+test_data <- stroke_data[-train_index, ]
+
+# Verify class distribution
+table(train_data$stroke) / nrow(train_data)
+table(test_data$stroke) / nrow(test_data)
+```
+
+## Train logistic regression
+```{r}
+logit_model <- glm(stroke ~ age + bmi + avg_glucose_level + hypertension + heart_disease + smoking_status,
+                   data = train_data, family = "binomial")
+
+summary(logit_model)
+
+
+```
+
+## Prediction of logistic regression 
+```{r}
+logit_probs <- predict(logit_model, test_data, type = "response")
+logit_roc <- roc(test_data$stroke, logit_probs)
+logit_auc <- auc(logit_roc)
+# Plot ROC curve
+plot(logit_roc, col = "darkorange", main = "ROC Curve - Logistic Regression", lwd = 2)
+print(paste("AUC for Logistic Regression:", round(logit_auc, 3)))
+```
+A multivariable logistic regression model is fitted to predict the probability of stroke based on given data. The model demonstrates that age is the most significant predictor (p<0.001), followed by average glucose level (p=0.021). Other variables (BMI, hypertension, heart disease, and smoking status) do not have statistical significance in this model (p>0.05). The model shows a residual deviance of 1116.6 on 3,568 degrees of freedom (AIC=1134.6), indicating a good fit. It also achieves an area under the ROC curve (AUC) of approximately 0.844. These results suggest that the logistic model achieves an effective balance between interpretability and predictive accuracy in this imbalanced stroke dataset.
+
+## Train LDA Model
+```{r}
+# Fit LDA model
+lda_model <- lda(stroke ~ age + bmi + avg_glucose_level + hypertension + heart_disease + smoking_status, 
+                 data = train_data)
+
+# Print model details
+lda_model
+
+```
+## Prediction of LDA
+```{r}
+# Predict on test set
+lda_pred <- predict(lda_model, test_data)
+
+# Confusion Matrix
+confusionMatrix(lda_pred$class, test_data$stroke)
+```
+
+## Compute ROC and AUC for LDA
+```{r}
+# Get LDA probabilities
+lda_probs <- predict(lda_model, test_data)$posterior[,2]
+# Compute ROC curve
+lda_roc <- roc(test_data$stroke, lda_probs)
+# Print AUC value
+lda_auc <-auc(lda_roc)
+
+# Plot ROC curve
+plot(lda_roc, col = "blue", main = "ROC Curve - LDA", lwd = 2)
+print(paste("AUC for LDA:", round(logit_auc, 3)))
+```
+LDA creates a linear boundary (best straight line) to separate classes based on their features. The average glucose level for stroke people (0.5574) is higher than non-stroke people(0.0100). Other variables like hypertension, heart disease for stroke people is also higher than non-stroke people. Looking at coefficients, age, heart disease and hypertension take most significant role in separation between stroke and non-stroke. While smoking status is least influential variable for predicting stroke outcomes. 
+Confusion matrix shows the model has 95% accuracy in prediction. However, high accuracy may due to the imbalance in classes. It can predict well for non-stroke people but fail to detect stroke people(1.35% specificity) , as there is lack of stroke data. 
+
+## Train Random Forest Model
+```{r}
+# Load library
+library(randomForest)
+
+# Set seed for reproducibility
+set.seed(123)
+
+# Train Random Forest model
+rf_model <- randomForest(
+  stroke ~ age + bmi + smoking_status + hypertension + heart_disease,
+  data = train_data,
+  ntree = 500,     # Number of trees
+  mtry = 3,        # Number of variables randomly sampled at each split
+  importance = TRUE  # To compute variable importance
+)
+```
+
+```{r results='asis', fig.width=6, fig.height=4}
+# Print rf_model in a wrapped format to avoid overflow in PDF
+cat(paste(capture.output(print(rf_model)), collapse = "\n"))
+
+# Still include the variable importance plot
+varImpPlot(rf_model, main = "Random Forest Variable Importance")
+```
+<br style="clear: both;" />
+
+The Random Forest variable importance plot shows that age is the most influential predictor of stroke, followed by average glucose level and BMI. Other features such as hypertension, heart disease, and smoking status contribute less to the model, reflecting their lower predictive power in this dataset.
+
+## Prediction of random forest 
+```{r}
+# Load library
+library(pROC)
+
+# Predict probabilities for the test set
+rf_probs <- predict(rf_model, test_data, type = "prob")[, 2]  # Probabilities for class 1 (stroke = 1)
+
+# Predict classes for confusion matrix
+rf_pred_class <- predict(rf_model, test_data, type = "response")
+
+# Confusion Matrix
+confusionMatrix(rf_pred_class, test_data$stroke, positive = "1")
+
+# Compute ROC curve
+rf_roc <- roc(test_data$stroke, rf_probs)
+
+# Plot ROC curve
+plot(rf_roc, col = "forestgreen", lwd = 2, main = "ROC Curve - Random Forest")
+abline(a = 0, b = 1, lty = 2, col = "gray")  # Add diagonal line for random guess
+
+# Compute AUC
+rf_auc <- auc(rf_roc)
+print(paste("AUC for Random Forest:", round(rf_auc, 3)))
+
+```
+The Random Forest model achieves a high overall accuracy with an AUC of approximately 0.783. It is good at correctly classifying non-stroke individuals, with a low error rate about 0.8%. However, similar to LDA, the model struggled with predicting stroke cases, due to the significant class imbalance in data. Models tend to predict the majority class (non-stroke) more successfully when the minority class (stroke) is rare.
+
+# *Evaluate chosen model*
+## Compare ROC with logistic regression, LDA, and rf
+```{r}
+# Overlay RF ROC on the existing plot
+plot(logit_roc, col = "blue", main = "ROC Curve: Logit vs LDA vs RF", lwd = 2)
+plot(lda_roc, col = "red", add = TRUE, lwd = 2)
+plot(rf_roc, col = "green", add = TRUE, lwd = 2)
+
+# Add legend
+legend("bottomright", legend = c("Logit", "LDA", "Random Forest"), col = c("blue", "red", "green"), lwd = 2)
+
+```
+<br style="clear: both;" />
+
+ROC curve is a better way to evaluate models with imbalanced data. In random forest ROC curve, the green line represents model’s performance. The diagonal gray line represents the performance with no predictive power. The ROC curve is above diagonal line, which means the model is better than random performance. 
+
+## Compare AUC
+```{r}
+cat("AUC - Logit: ", logit_auc, "\n")
+cat("AUC - LDA: ", lda_auc, "\n")
+cat("AUC - Random Forest: ", rf_auc, "\n")
+```
+The 0.78 AUC value tells the model is fair, but not good enough. Compare AUC value of Logistic regression and LDA, random forest has the lowest value and it slightly under performs.
+
+In this analysis, three models are compared for their ability to predict stroke occurrence in a highly imbalanced proportion (approximately 95% non-stroke and 5% stroke cases).
+
+Linear Discriminant Analysis (LDA) achieves the highest discriminative performance with an AUC of 0.845, closely followed by Logistic Regression (AUC ≈ 0.844). Random Forest is behind (AUC = 0.783), reflecting its tendency to predict the main non-stroke class and overfit the minority stroke class without directly addressing class imbalance.
+
+In terms of interpretability, Logistic Regression provides direct odds-ratio estimates, identifying age and average glucose level as the strongest predictors. LDA summarizes class separation using a single linear discriminant function, providing excellent predictive performance but less transparent variable-specific interpretation.
+
+Given its best AUC, simplicity, and robustness to overfitting, LDA is the best predictive model for this stroke dataset.
+
+# *Initial improvement*
+The substantial class imbalance in stroke dataset (95% non-stroke vs. 5% stroke) limits across all models, creating low sensitivity in detecting stroke cases, despite high overall accuracy. To address this, future improvements should consider resampling techniques or random oversampling to balance the training set. These methods can help models learn the characteristics of the minority class more effectively, improving it without heavily sacrificing precision.
+In another way, adjusting the decision threshold or incorporating cost-sensitive learning (e.g., using class weights in logistic regression or Random Forest) can prioritize reducing false negatives, which is critical in medical settings. Additionally, regularized logistic models (e.g., LASSO) could reduce overfitting while still identifying key predictors. Lastly, collecting more balanced data, including features like daily activity level and family history, would likely improve both the fairness and predictive power of future models.
